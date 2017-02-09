@@ -7,3 +7,4 @@ authors = ["Nick Massey <nickmass@nickmass.com>"]
 glium = "0.15"
 clap = "2.19"
 rand = "0.3"
+rayon = "0.6"

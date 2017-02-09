@@ -1,7 +1,9 @@
 #[macro_use]
 extern crate glium;
 extern crate rand;
+extern crate rayon;
 use rand::{Rng, thread_rng as rng};
+use rayon::prelude::*;
 
 use std::ops::{Add, Mul, Sub};
 
@@ -60,15 +62,12 @@ impl Game {
             }
         }
 
-        for mut target in self.targets.iter_mut() {
-            target.tick(dt);
-        }
+        self.targets.par_iter_mut().for_each(|t| t.tick(dt));
 
-        let living = self.targets.drain(..).filter(|t| t.state != TargetState::Dead).collect();
-        self.targets = living;
+        self.targets.retain(|t| t.state != TargetState::Dead);
 
         let killers: Vec<(Vector2, f64)> = self.targets
-            .iter()
+            .par_iter()
             .filter_map(|t| match t.state {
                 TargetState::Growing(s) |
                 TargetState::Shrinking(s) => Some((t.center, t.radius * s)),
@@ -76,11 +75,11 @@ impl Game {
             })
             .collect();
 
-        for mut target in self.targets
-            .iter_mut()
-            .filter(|t| t.state == TargetState::Alive)
-            .filter(|t| killers.iter().any(|k| t.center.distance(k.0) < k.1 + t.radius)) {
-            target.state = TargetState::Growing(1.0);
+        if killers.len() > 0 {
+            self.targets.par_iter_mut()
+                .filter(|t| t.state == TargetState::Alive)
+                .filter(|t| killers.iter().any(|k| t.center.distance(k.0) < k.1 + t.radius))
+                .for_each(|t| t.state = TargetState::Growing(1.0));
         }
 
         let mouse = self.window.poll_input();
