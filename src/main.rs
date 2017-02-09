@@ -339,6 +339,15 @@ struct Vertex {
 
 implement_vertex!(Vertex, position);
 
+
+#[derive(Copy, Clone)]
+struct TargetData {
+    matrix: Matrix3,
+    color: [f32; 4],
+}
+
+implement_vertex!(TargetData, matrix, color);
+
 pub struct Window {
     display: glium::Display,
     program: glium::Program,
@@ -360,13 +369,15 @@ impl Window {
         let vert_shader = r#"
             #version 140
 
-            uniform mat3 model_matrix;
             uniform mat3 view_matrix;
-
+            in mat3 matrix;
+            in vec4 color;
             in vec2 position;
+            out vec4 v_color;
 
             void main() {
-                vec3 p = view_matrix * model_matrix * vec3(position, 1.0);
+                vec3 p = view_matrix * matrix * vec3(position, 1.0);
+                v_color = color;
                 gl_Position = vec4(p.x / p.z, p.y / p.z, 1.0, 1.0);
             }
         "#;
@@ -374,12 +385,11 @@ impl Window {
         let frag_shader = r#"
             #version 140
 
-            uniform vec4 target_color;
-
+            in vec4 v_color;
             out vec4 color;
 
             void main() {
-                color = target_color;
+                color = v_color;
             }
        "#;
 
@@ -438,23 +448,34 @@ impl Window {
                 self.models.get(M::model_name().into()).unwrap()
             };
 
+            let mut target_data = Vec::new();
+
+            for item in items.into_iter() {
+                let item = item.borrow();
+                target_data.push(TargetData {
+                    matrix: item.matrix(),
+                    color: item.color(),
+                });
+            }
+
+            let target_data_buf = glium::VertexBuffer::new(&self.display, &target_data).unwrap();
+
             let view_matrix = view_matrix.into();
+
+            let uniforms = uniform!{
+                view_matrix: view_matrix,
+            };
+
             let indicies = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
 
             let mut target = self.display.draw();
             target.clear_color(0.0, 0.0, 0.0, 1.0);
-
-            for item in items.into_iter() {
-                let item = item.borrow();
-                let uniforms = uniform!{
-                    view_matrix: view_matrix,
-                    model_matrix: item.matrix(),
-                    target_color: item.color(),
-                };
-
-                target.draw(model, &indicies, &self.program, &uniforms, &params)
-                    .unwrap();
-            }
+            target.draw((model, target_data_buf.per_instance().unwrap()),
+                      &indicies,
+                      &self.program,
+                      &uniforms,
+                      &params)
+                .unwrap();
             target.finish().unwrap();
         }
         self.process_events();
