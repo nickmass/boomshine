@@ -1,0 +1,9 @@
+[package]
+name = "boomshine"
+version = "0.1.0"
+authors = ["Nick Massey <nickmass@nickmass.com>"]
+
+[dependencies]
+glium = "0.15"
+clap = "2.19"
+rand = "0.3"
