@@ -33,7 +33,7 @@ impl Game {
             mouse_down: false,
         };
 
-        for _ in 0..1000 {
+        for _ in 0..2000 {
             game.targets.push(Target::new(game.bounds));
         }
         game
@@ -57,7 +57,7 @@ impl Game {
 
     fn tick(&mut self, dt: f64) {
         if self.targets.len() == 0 {
-            for _ in 0..1000 {
+            for _ in 0..2000 {
                 self.targets.push(Target::new(self.bounds));
             }
         }
@@ -76,7 +76,8 @@ impl Game {
             .collect();
 
         if killers.len() > 0 {
-            self.targets.par_iter_mut()
+            self.targets
+                .par_iter_mut()
                 .filter(|t| t.state == TargetState::Alive)
                 .filter(|t| killers.iter().any(|k| t.center.distance(k.0) < k.1 + t.radius))
                 .for_each(|t| t.state = TargetState::Growing(1.0));
@@ -226,17 +227,12 @@ impl Target {
     }
 
     fn bomb(bounds: Rectangle, center: Vector2) -> Self {
-        let color = 0xffffff9f_u32;
-        let r = (color >> 24 & 0xff) as f32 / 255.0;
-        let g = (color >> 16 & 0xff) as f32 / 255.0;
-        let b = (color >> 8 & 0xff) as f32 / 255.0;
-        let a = (color >> 0 & 0xff) as f32 / 255.0;
         Target {
             radius: 2.0,
             bounds: bounds,
             center: center,
             state: TargetState::Growing(1.0),
-            color: [r, g, b, a],
+            color: [255.0, 255.0, 255.0, 0.624],
             direction: vector2(0.0, 0.0),
         }
     }
@@ -309,15 +305,14 @@ impl Mesh for Target {
     }
 
     fn model() -> Vec<Vertex> {
-        let tri_count = 50_i32;
+        let tri_count = 30_i32;
         let mut tris = Vec::new();
+        tris.push(Vertex { position: [0.0, 0.0] });
         let step = (2.0 * std::f64::consts::PI) / tri_count as f64;
         let mut accu = 0.0_f64;
-        for _ in 0..tri_count {
-            tris.push(Vertex { position: [0.0, 0.0] });
+        for _ in 0..tri_count + 1 {
             tris.push(Vertex { position: [accu.sin(), accu.cos()] });
             accu += step;
-            tris.push(Vertex { position: [accu.sin(), accu.cos()] });
         }
         tris
     }
@@ -430,8 +425,8 @@ impl Window {
 
     fn render<X, I, U, M>(&mut self, view_matrix: X, items: I)
         where X: Into<Matrix3>,
-              I: IntoIterator<Item = U>,
-              U: Borrow<M>,
+              I: IntoParallelIterator<Item = U>,
+              U: Borrow<M> + Send,
               M: Mesh
     {
         {
@@ -442,30 +437,26 @@ impl Window {
             let model = if self.models.contains_key(M::model_name().into()) {
                 self.models.get(M::model_name().into()).unwrap()
             } else {
-                let buf = glium::VertexBuffer::new(&self.display, &M::model()).unwrap();
+                let buf = VertexBuffer::new(&self.display, &M::model()).unwrap();
                 self.models.insert(M::model_name().into(), buf);
                 self.models.get(M::model_name().into()).unwrap()
             };
 
-            let mut target_data = Vec::new();
-
-            for item in items.into_iter() {
-                let item = item.borrow();
-                target_data.push(TargetData {
+            let target_data: Vec<_> = items.into_par_iter().map(|i| {
+                let item = i.borrow();
+                TargetData {
                     matrix: item.matrix(),
                     color: item.color(),
-                });
-            }
+                }
+            }).collect();
 
-            let target_data_buf = glium::VertexBuffer::new(&self.display, &target_data).unwrap();
-
-            let view_matrix = view_matrix.into();
+            let target_data_buf = VertexBuffer::new(&self.display, &target_data).unwrap();
 
             let uniforms = uniform!{
-                view_matrix: view_matrix,
+                view_matrix: view_matrix.into(),
             };
 
-            let indicies = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
+            let indicies = glium::index::NoIndices(glium::index::PrimitiveType::TriangleFan);
 
             let mut target = self.display.draw();
             target.clear_color(0.0, 0.0, 0.0, 1.0);
