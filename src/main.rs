@@ -2,10 +2,12 @@
 extern crate glium;
 extern crate rand;
 extern crate rayon;
+
 use rand::{Rng, thread_rng as rng};
 use rayon::prelude::*;
 
 use std::ops::{Add, Mul, Sub};
+use std::time::Instant;
 
 fn main() {
     let mut game = Game::new();
@@ -22,28 +24,26 @@ struct Game {
 impl Game {
     fn new() -> Self {
         let dims = (1024, 1024);
-        let mut game = Game {
-            bounds: Rectangle {
-                origin: vector2(0., 0.),
-                width: 100.0,
-                height: 100.0,
-            },
-            targets: Vec::new(),
-            window: Window::new(dims.0, dims.1),
-            mouse_down: false,
+
+        let bounds = Rectangle {
+            origin: vector2(0., 0.),
+            width: 100.,
+            height: 100.,
         };
 
-        for _ in 0..2000 {
-            game.targets.push(Target::new(game.bounds));
+        Game {
+            bounds: bounds,
+            targets: (0..2000).map(|_| Target::new(bounds)).collect(),
+            window: Window::new(dims.0, dims.1),
+            mouse_down: false,
         }
-        game
     }
 
     fn do_loop(&mut self) {
-        let mut last_tick = std::time::Instant::now();
+        let mut last_tick = Instant::now();
         while !self.window.is_closed() {
             let elapased = last_tick.elapsed();
-            last_tick = std::time::Instant::now();
+            last_tick = Instant::now();
             let dt = {
                 let secs = elapased.as_secs() as f64;
                 let nanos = elapased.subsec_nanos() as f64 / 1_000_000_000.0;
@@ -66,7 +66,7 @@ impl Game {
 
         self.targets.retain(|t| t.state != TargetState::Dead);
 
-        let killers: Vec<(Vector2, f64)> = self.targets
+        let killers: Vec<_> = self.targets
             .par_iter()
             .filter_map(|t| match t.state {
                 TargetState::Growing(s) |
@@ -320,7 +320,7 @@ impl Mesh for Target {
 
 use glium::Surface;
 use glium::DisplayBuild;
-use glium::vertex::VertexBuffer;
+use glium::VertexBuffer;
 use std::collections::HashMap;
 use std::borrow::Borrow;
 
@@ -349,6 +349,7 @@ pub struct Window {
     mouse_down: bool,
     mouse_position: (f64, f64),
     models: HashMap<String, VertexBuffer<Vertex>>,
+    params: glium::DrawParameters<'static>,
 }
 
 impl Window {
@@ -390,6 +391,11 @@ impl Window {
         let program = glium::Program::from_source(&display, vert_shader, frag_shader, None)
             .unwrap();
 
+        let params = glium::DrawParameters {
+            blend: glium::draw_parameters::Blend::alpha_blending(),
+            ..Default::default()
+        };
+
         Window {
             display: display,
             program: program,
@@ -397,6 +403,7 @@ impl Window {
             mouse_down: false,
             mouse_position: (0.0, 0.0),
             models: HashMap::new(),
+            params: params,
         }
     }
 
@@ -430,25 +437,19 @@ impl Window {
               M: Mesh
     {
         {
-            let params = glium::DrawParameters {
-                blend: glium::draw_parameters::Blend::alpha_blending(),
-                ..Default::default()
-            };
-            let model = if self.models.contains_key(M::model_name().into()) {
-                self.models.get(M::model_name().into()).unwrap()
-            } else {
-                let buf = VertexBuffer::new(&self.display, &M::model()).unwrap();
-                self.models.insert(M::model_name().into(), buf);
-                self.models.get(M::model_name().into()).unwrap()
-            };
+            let model = &*self.models
+                .entry(M::model_name().into())
+                .or_insert(VertexBuffer::new(&self.display, &M::model()).unwrap());
 
-            let target_data: Vec<_> = items.into_par_iter().map(|i| {
-                let item = i.borrow();
-                TargetData {
-                    matrix: item.matrix(),
-                    color: item.color(),
-                }
-            }).collect();
+            let target_data: Vec<_> = items.into_par_iter()
+                .map(|i| {
+                    let item = i.borrow();
+                    TargetData {
+                        matrix: item.matrix(),
+                        color: item.color(),
+                    }
+                })
+                .collect();
 
             let target_data_buf = VertexBuffer::new(&self.display, &target_data).unwrap();
 
@@ -464,7 +465,7 @@ impl Window {
                       &indicies,
                       &self.program,
                       &uniforms,
-                      &params)
+                      &self.params)
                 .unwrap();
             target.finish().unwrap();
         }
